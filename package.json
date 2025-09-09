@@ -1,0 +1,15 @@
+{
+  "name": "wa-sales-copilot-server",
+  "version": "0.1.1",
+  "description": "Golden Life - WhatsApp Sales Copilot (server)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "openai": "^4.56.0",
+    "zod": "^3.23.8"
+  }
+}
