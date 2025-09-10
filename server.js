@@ -131,3 +131,4 @@ const PORT = process.env.PORT || 8787;
 app.listen(PORT, () => {
   console.log(`WA Copilot server running on http://localhost:${PORT}`);
 });
+
