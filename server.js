@@ -1,115 +1,87 @@
-// server.js
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: "https://web.whatsapp.com" }));
 app.use(express.json());
 
-// ===== Env =====
-const API_KEY = process.env.OPENAI_API_KEY || "";
-const PROJECT_ID = process.env.OPENAI_PROJECT_ID || "";
-const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini"; // troque para "gpt-4o" se tiver acesso
-
-// Cliente OpenAI (SDK v4)
-const client = new OpenAI({
-  apiKey: API_KEY,
-  project: PROJECT_ID || undefined,
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  project: process.env.OPENAI_PROJECT_ID || undefined
 });
 
-// ===== Endpoints de verificação =====
-app.get("/", (_req, res) => {
-  res
-    .type("text/plain")
-    .send("WA Copilot server ok. POST /analyze | GET /_health | GET /_env");
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o";
+
+app.get("/", (req, res) => {
+  res.json({ ok: true, modelConfigured: MODEL });
 });
 
-app.get("/_env", (_req, res) => {
-  res.json({
-    hasKey: !!API_KEY,
-    hasProject: !!PROJECT_ID,
-    model: MODEL,
-    keyPrefix: API_KEY ? API_KEY.slice(0, 6) : null,
-    projectPrefix: PROJECT_ID ? PROJECT_ID.slice(0, 6) : null,
-  });
+app.get("/_health", (req, res) => {
+  res.json({ status: "ok", timestamp: Date.now() });
 });
 
-app.get("/_health", async (_req, res) => {
+app.get("/test-openai", async (req, res) => {
   try {
-    const models = await fetch("https://api.openai.com/v1/models", {
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "OpenAI-Project": PROJECT_ID || "",
-      },
-    }).then(r => r.json());
-
-    res.json({
-      ok: true,
-      hasKey: !!API_KEY,
-      hasProject: !!PROJECT_ID,
-      modelConfigured: MODEL,
-      modelsSample: Array.isArray(models?.data)
-        ? models.data.slice(0, 3).map(m => m.id)
-        : models,
+    const completion = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [{ role: "user", content: "Hola, ¿puedes responderme en una línea?" }],
+      max_tokens: 60,
+      temperature: 0.7
     });
+    res.json({ success: true, data: completion });
   } catch (err) {
-    res.status(200).json({
-      ok: false,
-      hasKey: !!API_KEY,
-      hasProject: !!PROJECT_ID,
-      modelConfigured: MODEL,
-      error: toErr(err),
-    });
+    console.error("Erro ao testar OpenAI:", err);
+    res.status(500).json({ error: "Falha na conexão com OpenAI", details: err.message });
   }
 });
 
-// ===== Endpoint principal =====
 app.post("/analyze", async (req, res) => {
-  const { history = [], draft = "" } = req.body || {};
-
   try {
-    const messages = [
-      {
-        role: "system",
-        content:
-          "Eres un asistente de ventas por WhatsApp. Resume el chat, e da una respuesta sugerida breve y clara, anota 2–3 puntos de atención, puntúa readiness/urgency/fit (1–10) y sugiere próximos pasos concretos.",
-      },
-      ...history.map(h => ({
-        role: h.role === "agent" ? "assistant" : "user",
-        content: h.text || "",
-      })),
-      draft ? { role: "assistant", content: draft } : null,
-    ].filter(Boolean);
+    const { messages = [], chatTitle = "", contactName = "" } = req.body || {};
+    if (!messages.length) {
+      return res.status(400).json({ error: "No messages found in request" });
+    }
 
-    // ✅ Usa a Responses API (compatível com gpt-4o-mini, gpt-4o, etc.)
-    const response = await client.responses.create({
+    const context = messages.slice(-12).map(m => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: `${m.sender || "Lead"}: ${m.text}`
+    }));
+
+    const system = {
+      role: "system",
+      content: `Tu tarea es actuar como asistente comercial experto. Lee la conversación y responde con:
+1. Un resumen del chat (máx 2 líneas)
+2. Una sugerencia de respuesta ideal para enviar ahora al prospecto.
+Responde siempre en español LATAM. Si no hay suficiente contexto, pede al usuario que reformule.`
+    };
+
+    const completion = await openai.chat.completions.create({
       model: MODEL,
-      messages,
-      temperature: 0.3,
+      messages: [system, ...context],
+      temperature: 0.6,
+      max_tokens: 400
     });
 
-    // Texto de saída “amigável”
-    const text =
-      response.output_text?.trim() ||
-      response?.output?.[0]?.content?.[0]?.text?.value ||
-      "";
+    const raw = completion.choices?.[0]?.message?.content || "";
+    const [summary = "", suggested_reply = ""] = raw.split(/(?:\n\n|
+—
+|
+Sugerencia:)/).map(s => s.trim());
 
     return res.json({
-      mode: "live",
-      summary: "(generado por OpenAI)",
-      suggested_reply: text,
-      tips: [],
+      summary,
+      suggested_reply,
       scores: { readiness: 6, urgency: 5, fit: 7 },
-      next_best_actions: [],
+      raw
     });
   } catch (err) {
-    // >>>> Diagnóstico explícito
-    const info = toErr(err);
-    console.error("[/analyze] OpenAI error:", info);
+    console.error("Erro ao analisar conversa:", err);
+    res.status(500).json({ error: "Erro ao gerar resposta", details: err.message });
+  }
+});
 
-    return res.json({
-      mode: "mock",
-      summary: "Demo: sin conexión a OpenAI (usando mock).",
-      suggested_reply:
-        "Gracias por
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Copilot backend running on port", PORT);
+});
