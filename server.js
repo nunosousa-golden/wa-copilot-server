@@ -15,7 +15,6 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini"; // troque para "gpt-4o"
 // Cliente OpenAI (SDK v4)
 const client = new OpenAI({
   apiKey: API_KEY,
-  // o SDK v4 aceita project assim; se preferir, pode usar header manual
   project: PROJECT_ID || undefined,
 });
 
@@ -38,7 +37,6 @@ app.get("/_env", (_req, res) => {
 
 app.get("/_health", async (_req, res) => {
   try {
-    // chamada barata para checar autenticação
     const models = await fetch("https://api.openai.com/v1/models", {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
@@ -75,7 +73,7 @@ app.post("/analyze", async (req, res) => {
       {
         role: "system",
         content:
-          "Eres un asistente de ventas por WhatsApp. Resume el chat, da una respuesta sugerida breve y clara, anota 2–3 puntos de atención, puntúa readiness/urgency/fit (1–10) y sugiere próximos pasos concretos.",
+          "Eres un asistente de ventas por WhatsApp. Resume el chat, e da una respuesta sugerida breve y clara, anota 2–3 puntos de atención, puntúa readiness/urgency/fit (1–10) y sugiere próximos pasos concretos.",
       },
       ...history.map(h => ({
         role: h.role === "agent" ? "assistant" : "user",
@@ -84,15 +82,19 @@ app.post("/analyze", async (req, res) => {
       draft ? { role: "assistant", content: draft } : null,
     ].filter(Boolean);
 
-    // Chat Completions (model livre e barato por padrão)
-    const completion = await client.chat.completions.create({
+    // ✅ Usa a Responses API (compatível com gpt-4o-mini, gpt-4o, etc.)
+    const response = await client.responses.create({
       model: MODEL,
       messages,
       temperature: 0.3,
     });
 
-    const text = completion.choices?.[0]?.message?.content || "";
-    // Aqui você pode fazer parsing mais elaborado. Por enquanto devolvo o texto todo.
+    // Texto de saída “amigável”
+    const text =
+      response.output_text?.trim() ||
+      response?.output?.[0]?.content?.[0]?.text?.value ||
+      "";
+
     return res.json({
       mode: "live",
       summary: "(generado por OpenAI)",
@@ -110,25 +112,4 @@ app.post("/analyze", async (req, res) => {
       mode: "mock",
       summary: "Demo: sin conexión a OpenAI (usando mock).",
       suggested_reply:
-        "Gracias por tu mensaje. ¿Qué objetivo quieres lograr en 30 días? La inversión es US$47 con garantía 7 días. Te dejo listo hoy o agendamos una llamada de 5 min.",
-      tips: ["Confirmar objetivo y dolor", "Recordar garantía 7 días"],
-      scores: { readiness: 6, urgency: 5, fit: 7 },
-      next_best_actions: ["Enviar link de pago", "Proponer llamada 5 min"],
-      error: info, // <<<<<< aqui você verá o motivo real
-    });
-  }
-});
-
-function toErr(e) {
-  return {
-    message: e?.message,
-    status: e?.status || e?.response?.status,
-    data: e?.response?.data || e?.data,
-  };
-}
-
-const PORT = process.env.PORT || 8787;
-app.listen(PORT, () => {
-  console.log(`WA Copilot server running on http://localhost:${PORT}`);
-});
-
+        "Gracias por
